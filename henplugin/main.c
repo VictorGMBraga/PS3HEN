@@ -29,7 +29,6 @@
 #include <types.h>
 #include "common.h"
 #include "stdc.h"
-#include "download_plugin.h"
 #include "game_ext_plugin.h"
 #include "xmb_plugin.h"
 
@@ -94,7 +93,6 @@ int opd[2] = {0, 0};
 
 #define IS_INSTALLING	(View_Find("game_plugin") != 0)
 #define IS_INSTALLING_NAS	(View_Find("nas_plugin") != 0)
-#define IS_DOWNLOADING	(View_Find("download_plugin") != 0)
 
 typedef struct
 {
@@ -290,7 +288,6 @@ static int UnloadPluginById(int id, void *handler)
 #define SYSCALL8_OPCODE_HEN_REV		0x1339
 
 //int is_hen_installed=0;
-int thread2_download_finish=0;
 int thread3_install_finish=0;
 
 #define SYSCALL_PEEK	6
@@ -301,36 +298,7 @@ static uint64_t peekq(uint64_t addr)
 	return_to_user_prog(uint64_t);
 }
 
-
-static void downloadPKG_thread2(void)
-{
-
-	if(download_interface == 0) // test if download_interface is loaded for interface access
-	{
-		download_interface = (download_plugin_interface *)plugin_GetInterface(View_Find("download_plugin"), 1);
-	}
-	show_msg((char *)"Downloading latest HEN pkg");
-	uint64_t val=peekq(0x80000000002FCB68ULL);
-	if(val==0x323031372F30382FULL) 
-		{
-			download_interface->DownloadURL(0, (wchar_t *) L"http://ps3xploit.com/hen/release/482/cex/installer/Latest_HEN_Installer_signed.pkg", (wchar_t *) L"/dev_hdd0");
-		}
-	else if(val==0x323031392F30312FULL)
-		{
-			download_interface->DownloadURL(0,(wchar_t *) L"http://ps3xploit.com/hen/release/484/cex/installer/Latest_HEN_Installer_signed.pkg", (wchar_t *) L"/dev_hdd0");
-		}	
-	else if(val==0x323031392F30372FULL)
-		{
-			download_interface->DownloadURL(0,(wchar_t *) L"http://ps3xploit.com/hen/release/485/cex/installer/Latest_HEN_Installer_signed.pkg", (wchar_t *) L"/dev_hdd0");
-		}	
-	else if(val==0x323032302F30312FULL)
-		{
-			download_interface->DownloadURL(0,(wchar_t *) L"http://ps3xploit.com/hen/release/486/cex/installer/Latest_HEN_Installer_signed.pkg", (wchar_t *) L"/dev_hdd0");
-		}	
-	thread2_download_finish=1;
-}
-
-char pkg_path[256]={"/dev_hdd0/Latest_HEN_Installer_signed.pkg"};
+char pkg_path[256]={"/dev_usb000/HEN_UPD.pkg"};
 
 static void installPKG_thread(void)
 {
@@ -353,110 +321,12 @@ static void unloadSysPluginCallback(void)
 	//show_msg((char *)"plugin shutdown via xmb call launched");
 }
 
-static void unload_web_plugins(void)
-{
-
-	while(View_Find("webrender_plugin"))
-	{
-		UnloadPluginById(0x1C, (void *)unloadSysPluginCallback);
-		sys_timer_usleep(70000);
-	}
-
-	while(View_Find("webbrowser_plugin"))
-	{
-		UnloadPluginById(0x1B, (void *)unloadSysPluginCallback);
-		sys_timer_usleep(70000);
-	}
-
-	explore_interface->ExecXMBcommand("close_all_list", 0, 0);
-}
-
-char server_reply[0x500];
-
-int hen_updater(void);
-int hen_updater(void)
-{
-	uint16_t latest_rev=0;
-	Host = gethostbyname(HOST_SERVER);
-	if(!Host)
-	{
-		show_msg((char *)"Could not resolve update Host!\n");
-		return -1;
-	}
-    SocketAddress.sin_addr.s_addr = *((unsigned long*)Host->h_addr);
-    SocketAddress.sin_family = AF_INET;
-    SocketAddress.sin_port = SERVER_PORT;
-    Socket = socket(AF_INET, SOCK_STREAM, 0);
-    if (connect(Socket, (struct sockaddr *)&SocketAddress, sizeof(SocketAddress)) != 0) {
-		show_msg((char *)"Failed To Connect To Update Server!");
-        return -1;
-    }
- 
-	strcpy(RequestBuffer, "GET ");
-    strcat(RequestBuffer, "/hen/hen_version.bin");
-    strcat(RequestBuffer, " HTTP/1.0\r\n");
-	strcat(RequestBuffer, "User-Agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.140 Safari/537.36 Edge/17.17134\r\n");
-    strcat(RequestBuffer, "Accept-Language: en-US\r\n");
-    strcat(RequestBuffer, "Accept: text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8\r\n");
-    strcat(RequestBuffer, "Upgrade-Insecure-Requests: 1\r\n");
-    strcat(RequestBuffer, "HOST: "HOST_SERVER"\r\n");
-    strcat(RequestBuffer, "Connection: close\r\n");
-    strcat(RequestBuffer, "\r\n");
-    send(Socket, RequestBuffer, strlen(RequestBuffer), 0);
- 
-	int reply_len=0;
-	int allowed_length=sizeof(server_reply);
-    while (1)
-    {
-		int reply_len1=recv(Socket, &server_reply[reply_len], allowed_length, 0);
-		if(reply_len1>0)
-		{
-			reply_len+=reply_len1;
-			allowed_length-=reply_len1;
-		}
-		else
-		{
-			break;
-		}
-    }
-	socketclose(Socket);			
-	if(reply_len<=6)
-	{
-		show_msg((char *)"Error on update server!");
-		return 0;
-	}
-	
-	if(strstr(server_reply,"200 OK"))
-	{
-		latest_rev=*(uint16_t *)(server_reply+reply_len-2);
-	}
-	else
-	{
-		show_msg((char *)"Update Server Responded With Error!");
-		return 0;
-	}
-	
-	char msg[100];
-	sprintf(msg,"Latest PS3HEN available is %X.%X.%X",latest_rev>>8, (latest_rev & 0xF0)>>4, (latest_rev&0xF));
-	show_msg((char*)msg);
-	if(hen_version<latest_rev)
-	{
-		return 1;
-	}
-	return 0;
-}
-
 static void henplugin_thread(__attribute__((unused)) uint64_t arg)
 {
 	View_Find = getNIDfunc("paf", 0xF21655F3, 0);
 	plugin_GetInterface = getNIDfunc("paf", 0x23AFB290, 0);
 	int view = View_Find("explore_plugin");
 	system_call_1(8, SYSCALL8_OPCODE_HEN_REV); hen_version = (int)p1;
-	char henver[0x30];
-	//sprintf(henver, "Welcome to PS3HEN %X.%02X", hen_version>>8, (hen_version & 0xFF));
-	sprintf(henver, "Welcome to PS3HEN %X.%X.%X", hen_version>>8, (hen_version & 0xF0)>>4, (hen_version&0xF));
-	
-	show_msg((char *)henver);
 	
 	if(view==0)
 	{
@@ -479,49 +349,6 @@ static void henplugin_thread(__attribute__((unused)) uint64_t arg)
 			sys_timer_usleep(70000);
 		}
 		goto done;
-	}
-	int do_update=hen_updater();
-	if((cellFsStat("/dev_flash/vsh/resource/explore/icon/hen_enable.png",&stat)!=0) || (do_update==1))
-	{
-		cellFsUnlink("/dev_hdd0/theme/PS3HEN.p3t");
-		int is_browser_open=View_Find("webbrowser_plugin");
-		while(is_browser_open)
-		{
-			sys_timer_usleep(70000);
-			is_browser_open=View_Find("webbrowser_plugin");
-		}
-		is_browser_open=View_Find("webrender_plugin");
-		while(is_browser_open)
-		{
-			sys_timer_usleep(70000);
-			is_browser_open=View_Find("webrender_plugin");
-		}
-		unload_web_plugins();
-		LoadPluginById(0x29,(void*)downloadPKG_thread2);
-		
-		while(thread2_download_finish==0)
-		{
-			sys_timer_usleep(70000);
-		}
-		
-		while(IS_DOWNLOADING)
-		{
-			sys_timer_usleep(500000);
-		}
-		
-		if(cellFsStat("/dev_hdd0/Latest_HEN_Installer_signed.pkg",&stat)==0)
-		{
-			LoadPluginById(0x16, (void *)installPKG_thread);
-			while(thread3_install_finish==0)
-			{
-				sys_timer_usleep(70000);
-			}
-			goto done;
-		}
-	}
-	else
-	{    
-		cellFsUnlink("/dev_hdd0/Latest_HEN_Installer_signed.pkg");
 	}
 	
 done:
